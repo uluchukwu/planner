@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/* ── Design tokens ──────────────────────────────────────────────────────
+   Paper-planner inspired palette: warm off-white surfaces, ink text, a
+   single calm accent (forest green) for structure, and a second, sparingly
+   used accent (terracotta) reserved for priority markers only — so "this is
+   one of my 3/4 priorities" stays visually rare and meaningful.
+   Light tokens live on bare :root; dark tokens are layered on in two
+   places so both system preference and an explicit user choice work. */
+
+:root {
+  --paper: #faf7f1;
+  --surface: #ffffff;
+  --surface-sunken: #f3efe6;
+  --ink: #23211c;
+  --ink-soft: #6f6a5e;
+  --ink-faint: #a8a294;
+  --hairline: #e6e0d2;
+  --accent: #2f5d50;
+  --accent-soft: #e3ece7;
+  --accent-strong: #1f4038;
+  --priority: #b1552c;
+  --priority-soft: #f5e4d8;
+  --danger: #ad3b3b;
+  --danger-soft: #f6e2e2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #1a1b1d;
+    --surface: #222325;
+    --surface-sunken: #29292c;
+    --ink: #ece9e2;
+    --ink-soft: #a6a196;
+    --ink-faint: #716d63;
+    --hairline: #35363a;
+    --accent: #5ea08c;
+    --accent-soft: #24352f;
+    --accent-strong: #7ec1ab;
+    --priority: #d98a5f;
+    --priority-soft: #3a2c22;
+    --danger: #d97a7a;
+    --danger-soft: #3a2626;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #1a1b1d;
+  --surface: #222325;
+  --surface-sunken: #29292c;
+  --ink: #ece9e2;
+  --ink-soft: #a6a196;
+  --ink-faint: #716d63;
+  --hairline: #35363a;
+  --accent: #5ea08c;
+  --accent-soft: #24352f;
+  --accent-strong: #7ec1ab;
+  --priority: #d98a5f;
+  --priority-soft: #3a2c22;
+  --danger: #d97a7a;
+  --danger-soft: #3a2626;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-hairline: var(--hairline);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-strong: var(--accent-strong);
+  --color-priority: var(--priority);
+  --color-priority-soft: var(--priority-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-sans);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+* {
+  border-color: var(--hairline);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

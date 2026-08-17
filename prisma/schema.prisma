@@ -1,0 +1,463 @@
+// Prisma schema for the Personal Productivity & Weekly Planning App.
+// See /docs/DATABASE.md for the rationale behind the modelling decisions below.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────
+
+enum GoalLevel {
+  YEAR
+  MONTH
+  WEEK
+}
+
+enum GoalCategory {
+  CAREER
+  EDUCATION
+  HEALTH
+  FINANCE
+  PERSONAL
+  RELATIONSHIPS
+  BUSINESS
+  PROJECTS
+  OTHER
+}
+
+enum GoalStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  ACHIEVED
+  MISSED
+  ARCHIVED
+}
+
+// 'auto' = derived from linked task completion, 'manual' = user-entered percentage.
+enum ProgressMode {
+  AUTO
+  MANUAL
+}
+
+enum TaskPriority {
+  URGENT_IMPORTANT
+  URGENT_NOT_IMPORTANT
+  NOT_URGENT_IMPORTANT
+  NOT_URGENT_NOT_IMPORTANT
+}
+
+enum TaskStatus {
+  PENDING
+  COMPLETED
+  RESCHEDULED
+  ARCHIVED
+}
+
+enum Weekday {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum HabitFrequency {
+  DAILY
+  WEEKLY
+  X_TIMES_PER_WEEK
+}
+
+enum ChecklistScope {
+  YEAR
+  MONTH
+  WEEK
+  DAY
+  GOAL
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  MOBILE_MONEY
+  OTHER
+}
+
+enum ExpenseCategory {
+  FOOD
+  TRANSPORT
+  BILLS
+  EDUCATION
+  ENTERTAINMENT
+  SHOPPING
+  HEALTH
+  BUSINESS
+  OTHER
+}
+
+enum NotificationType {
+  PRIORITY_INCOMPLETE
+  UPCOMING_TASK
+  PLAN_TOMORROW
+  WEEKLY_REVIEW_READY
+  CUSTOM
+}
+
+enum ThemePreference {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+// ── Core identity ───────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Preferences (kept on User rather than a side table; personal app, one row is enough)
+  timezone           String          @default("UTC")
+  weekStartsOn        Weekday         @default(MONDAY)
+  currency            String          @default("USD")
+  theme                ThemePreference @default(SYSTEM)
+  defaultWorkStartHour Int             @default(9)
+  defaultWorkEndHour   Int             @default(17)
+  notificationsEnabled Boolean         @default(true)
+
+  sessions      Session[]
+  goals         Goal[]
+  weeks         Week[]
+  days          Day[]
+  tasks         Task[]
+  timeBlocks    TimeBlock[]
+  habits        Habit[]
+  checklists    Checklist[]
+  checklistItems ChecklistItem[]
+  expenses      Expense[]
+  notes         Note[]
+  weeklyReviews WeeklyReview[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ── Time containers ─────────────────────────────────────────────────────
+// Weeks and Days are lazily-created rows keyed by date, not a pre-populated calendar.
+// dateKey is always an ISO "YYYY-MM-DD" string to avoid timezone/DST day-boundary bugs.
+
+model Week {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate  String // ISO YYYY-MM-DD, the first day of the week per user's weekStartsOn setting
+  endDate    String // ISO YYYY-MM-DD, inclusive
+  theme      String?
+  reflection String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  goals         Goal[]
+  tasks         Task[]
+  days          Day[]
+  checklists    Checklist[]
+  weeklyReviews WeeklyReview[]
+
+  @@unique([userId, startDate])
+  @@map("weeks")
+}
+
+model Day {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        String // ISO YYYY-MM-DD
+  weekId      String?  @db.Uuid
+  week        Week?    @relation(fields: [weekId], references: [id], onDelete: SetNull)
+  challenge   String? // "Today's Challenge" free text
+  objective   String? // top-level daily objective, mirrors the paper planner's "Objective" field
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks      Task[]
+  timeBlocks TimeBlock[]
+  checklists Checklist[]
+
+  @@unique([userId, date])
+  @@index([weekId])
+  @@map("days")
+}
+
+// ── Goals (year / month / week, self-referencing for the hierarchy) ─────
+
+model Goal {
+  id           String       @id @default(uuid()) @db.Uuid
+  userId       String       @db.Uuid
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  level        GoalLevel
+  title        String
+  description  String?
+  category     GoalCategory @default(OTHER)
+  targetDate   String? // ISO YYYY-MM-DD
+  status       GoalStatus   @default(NOT_STARTED)
+  notes        String?
+
+  // Progress: auto is computed from linked tasks' completion ratio; manual is user-entered.
+  progressMode    ProgressMode @default(AUTO)
+  manualProgress  Int? // 0-100, only meaningful when progressMode = MANUAL
+
+  isPriority Boolean @default(false) // surfaced as one of the year's "most important" goals
+
+  parentId String? @db.Uuid
+  parent   Goal?   @relation("GoalHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Goal[]  @relation("GoalHierarchy")
+
+  // A WEEK-level goal optionally belongs to a specific Week (for the 4-priority-per-week rule).
+  weekId String? @db.Uuid
+  week   Week?   @relation(fields: [weekId], references: [id], onDelete: SetNull)
+
+  // Priority ranking among a week's goals (1-4). Null for non-priority / year / month goals.
+  weeklyPriorityRank Int?
+
+  monthKey String? // "YYYY-MM", only meaningful when level = MONTH
+  yearKey  Int? // e.g. 2026, only meaningful when level = YEAR
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+
+  @@index([userId, level])
+  @@index([weekId])
+  @@map("goals")
+}
+
+// ── Tasks ────────────────────────────────────────────────────────────────
+
+model Task {
+  id       String     @id @default(uuid()) @db.Uuid
+  userId   String     @db.Uuid
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title    String
+  notes    String?
+  status   TaskStatus @default(PENDING)
+  priority TaskPriority?
+  category String?
+
+  estimatedMinutes Int?
+  dueTime          String? // "HH:MM", optional
+
+  // A task can sit in the weekly Inbox (dayId null) or be assigned to a specific day.
+  weekId String? @db.Uuid
+  week   Week?   @relation(fields: [weekId], references: [id], onDelete: SetNull)
+  dayId  String? @db.Uuid
+  day    Day?    @relation(fields: [dayId], references: [id], onDelete: SetNull)
+
+  goalId String? @db.Uuid
+  goal   Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  parentTaskId String? @db.Uuid
+  parentTask   Task?   @relation("TaskSubtasks", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  subtasks     Task[]  @relation("TaskSubtasks")
+
+  // Top-3-daily / top-4-weekly priority slots. Non-null rank = currently occupies a slot.
+  dailyPriorityRank  Int? // 1-3, only when dayId is set
+  weeklyPriorityRank Int? // not used on tasks today (goals carry weekly priority) - reserved
+
+  sortOrder Int @default(0) // manual ordering within a column (Inbox / a given day)
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  timeBlocks TimeBlock[]
+
+  @@index([userId, weekId])
+  @@index([userId, dayId])
+  @@index([goalId])
+  @@map("tasks")
+}
+
+// ── Time blocking ────────────────────────────────────────────────────────
+
+model TimeBlock {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayId     String   @db.Uuid
+  day       Day      @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  taskId    String?  @db.Uuid // nullable: a block can exist without a linked task, and a task can have several blocks
+  task      Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  title     String // defaults to the linked task's title but editable independently
+  startMinutes Int // minutes since local midnight, e.g. 9:00am = 540
+  endMinutes   Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, dayId])
+  @@map("time_blocks")
+}
+
+// ── Habits ───────────────────────────────────────────────────────────────
+
+model Habit {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @db.Uuid
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  frequency HabitFrequency @default(DAILY)
+  target    Int            @default(7) // e.g. times per week
+  archived  Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  completions HabitCompletion[]
+
+  @@map("habits")
+}
+
+model HabitCompletion {
+  id        String   @id @default(uuid()) @db.Uuid
+  habitId   String   @db.Uuid
+  habit     Habit    @relation(fields: [habitId], references: [id], onDelete: Cascade)
+  date      String // ISO YYYY-MM-DD
+  createdAt DateTime @default(now())
+
+  @@unique([habitId, date])
+  @@map("habit_completions")
+}
+
+// ── Checklists (generic, attachable to year/month/week/day/goal) ────────
+
+model Checklist {
+  id     String         @id @default(uuid()) @db.Uuid
+  userId String         @db.Uuid
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope  ChecklistScope
+  title  String
+
+  weekId String? @db.Uuid
+  week   Week?   @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  dayId  String? @db.Uuid
+  day    Day?    @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  // YEAR/MONTH/GOAL scoped checklists are addressed via yearKey/monthKey/goalId on items' parent context
+  yearKey  Int?
+  monthKey String?
+
+  createdAt DateTime @default(now())
+
+  items ChecklistItem[]
+
+  // Postgres treats each NULL as distinct, so these only enforce "at most one
+  // checklist per week" / "per day" — they don't block future YEAR/MONTH/GOAL
+  // scoped checklists, which leave both weekId and dayId null.
+  @@unique([userId, weekId])
+  @@unique([userId, dayId])
+  @@map("checklists")
+}
+
+model ChecklistItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checklistId String    @db.Uuid
+  checklist   Checklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  label       String
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@map("checklist_items")
+}
+
+// ── Expenses ─────────────────────────────────────────────────────────────
+
+model Expense {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Decimal         @db.Decimal(10, 2)
+  date          String // ISO YYYY-MM-DD
+  category      ExpenseCategory @default(OTHER)
+  description   String?
+  paymentMethod PaymentMethod   @default(CARD)
+  note          String?
+  createdAt     DateTime        @default(now())
+
+  @@index([userId, date])
+  @@map("expenses")
+}
+
+// ── Notes ────────────────────────────────────────────────────────────────
+
+model Note {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notes")
+}
+
+// ── Weekly review ────────────────────────────────────────────────────────
+
+model WeeklyReview {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekId String @db.Uuid @unique
+  week   Week   @relation(fields: [weekId], references: [id], onDelete: Cascade)
+
+  wentWell      String?
+  didntGoWell   String?
+  learned       String?
+  changeNextWeek String?
+  proudOf       String?
+  carryForward  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("weekly_reviews")
+}
+
+// ── Notifications ────────────────────────────────────────────────────────
+
+model Notification {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String            @db.Uuid
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  message   String
+  read      Boolean           @default(false)
+  createdAt DateTime          @default(now())
+
+  @@index([userId, read])
+  @@map("notifications")
+}
