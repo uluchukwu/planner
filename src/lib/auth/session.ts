@@ -67,3 +67,9 @@ export async function deleteSession(): Promise<void> {
   }
   cookieStore.delete(COOKIE_NAME);
 }
+
+// Mobile's counterpart to deleteSession() — there's no cookie to read the token from,
+// so the route handler passes the bearer token it already has directly.
+export async function deleteSessionForToken(token: string): Promise<void> {
+  await db.session.deleteMany({ where: { tokenHash: hashToken(token) } });
+}
