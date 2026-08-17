@@ -65,16 +65,21 @@ Phases as specified in the original brief, annotated with actual status after th
 
 **Not done:** no print stylesheet for the live on-screen views (a `@media print` treatment of `/day` or `/week` as rendered) — the PDF export is a separate, deliberately simpler rendering path built for this instead, per `ARCHITECTURE.md`'s original note under `UI_SYSTEM.md`.
 
-## Phase 6 — Android — foundation only (auth + one screen)
+## Phase 6 — Android — screens done, sync/push/sharing not started
 
-- [x] React Native / Expo app scaffolded (`C:\programming\PlannerMobile`, separate repo, Expo SDK 57) — login screen + a Today screen (challenge, objective, tap-to-complete task list), talking to this app over a new `/api/mobile/*` JSON surface (see `ARCHITECTURE.md`)
-- [ ] Domain-logic sharing with the web app — not done; the mobile app currently duplicates nothing but also shares nothing (see `PlannerMobile/README.md`'s "Code sharing" section for why, and the trigger condition for doing it)
-- [ ] Offline-first local persistence + sync — not started, not attempted this pass
-- [ ] Push notifications — not started
+Built across two passes, sequenced deliberately (screens first, then the harder pieces, per an explicit choice when this phase started):
 
-**Verification caveat, important:** this environment has no Android SDK, `adb`, Java, or physical device. Only the `expo start --web` target (react-native-web) was actually run and tested — 4 assertions via a scripted Playwright pass: wrong-password rejection shows the server's error text, correct login reaches the Today screen with seeded data, a task toggle persists across a hard reload (checked against the server's own response, not local state or CSS), zero unexpected console errors. Native SecureStore token storage, native navigation/gestures, and anything Android/iOS-specific are unverified — see `PlannerMobile/README.md`.
+- [x] **Pass 1 — foundation:** React Native / Expo app scaffolded (`C:\programming\PlannerMobile`, separate repo, Expo SDK 57), login + a Today screen, the first `/api/mobile/*` routes.
+- [x] **Pass 2 — screens:** five more screens — Dashboard, Week (priority goals, 7-day summary linking into Today, habit tracker grid, weekly checklist), Goals (year + month), Habits (full management), Expenses (month view + breakdown). Day navigation and inline task creation added to Today. 12 new `/api/mobile/*` routes to back them (goals, habits, checklist items, expenses, week aggregation, dashboard aggregation) — see `PlannerMobile/README.md` for the full endpoint table.
+- [ ] Weekly Review screen (reflection form + week-transition triage) — deliberately deferred as the most complex remaining screen; the API surface for it (`saveWeeklyReview`, `moveTaskToNextWeek`, `rescheduleTaskToDate`, `archiveTask`) hasn't been extended to mobile yet either.
+- [ ] Settings screen — not built.
+- [ ] Domain-logic sharing with the web app — still not done. The mobile app now duplicates a *few lines* of pure logic directly (`dateUtils.ts`'s `addDays`/`todayKey`, `ExpensesScreen.tsx`'s currency/month formatting) rather than a shared package — deliberate, see `PlannerMobile/README.md`'s "Code sharing" section.
+- [ ] Offline-first local persistence + sync — not started.
+- [ ] Push notifications — not started.
 
-**Bug found in review, not shipped:** the mobile client's `ApiError` initially had no `status` field, so 401 handling matched on the literal string `"Unauthorized"` — a server-side copy change would have silently broken the expired-token-bounces-to-login flow. Fixed before shipping: `ApiError` now carries the HTTP status, checked as `=== 401`.
+**Correctness decision made during Pass 2:** the non-negotiable "max 4 weekly priority goals" transaction (`toggleWeeklyPriority`) was extracted into `src/lib/core/weeklyPriority.ts`, a single function called by both the web Server Action and the new mobile route (`POST /api/mobile/goals/:id/priority`). Two independent implementations of a safety-critical limit is exactly the kind of divergence risk this project has hit before (see the Phase 3 priority-limit flake investigation) — this closes that risk at the one point it mattered, rather than duplicating the transaction into the mobile route handler. Verified: the full web E2E suite (including the DB-level rapid-click race check) still passes 7/7 after the refactor.
+
+**Verification caveat, important:** this environment has no Android SDK, `adb`, Java, or physical device. Only the `expo start --web` target (react-native-web) was actually run and tested. Pass 2 verification: a scripted Playwright pass seeding data through the web app (task, challenge, weekly goal, year goal, expense) and then exercising every mobile screen — sign-in, Today's day-nav round-trip and inline task creation, Week's goal-starring and checklist-add, Goals' add flow, Habits' create flow, Expenses' totals/breakdown, Dashboard's aggregation — plus a direct `GET /api/mobile/dashboard` call (bypassing the UI entirely) confirming the mobile-created task actually persisted server-side. Zero console errors. Native SecureStore token storage, native navigation/gestures, real device screen behavior, and anything Android/iOS-specific remain unverified — see `PlannerMobile/README.md`.
 
 ## Also deferred (cut from this pass, not phase-mapped in the original brief)
 

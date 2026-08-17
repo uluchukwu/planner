@@ -46,7 +46,9 @@ Styling (`src/lib/pdf/theme.ts`) follows the roadmap's "A4, high-contrast, low-i
 
 `src/app/api/mobile/*` are JSON Route Handlers for a separate Expo/React Native client (`C:\programming\PlannerMobile`, Phase 6) that can't reach Postgres directly and has no cookie jar shared with this server. They reuse the exact same `Session` table as web auth (`src/lib/auth/session.ts`'s `createSessionToken`/`getSessionUserIdForToken`) but hand the raw token back in the JSON response body instead of setting a cookie, and expect it back as `Authorization: Bearer <token>` on every subsequent request (`src/lib/auth/mobileAuth.ts`'s `requireMobileUser`). A mobile login and a web login are the same kind of row — just handed to the client differently.
 
-Three routes exist so far: `POST /login`, `GET /today`, `POST /tasks/[id]/toggle` — enough for the mobile app's single "auth + today screen" slice, not a general API. CORS is wide open (`Access-Control-Allow-Origin: *`) on these routes only, which is safe specifically because auth here is a Bearer token the client must already possess rather than an ambient cookie — there's no session to ride cross-origin the way there would be with cookie-based auth.
+21 routes now exist under `src/app/api/mobile/` (auth, today/day + task create, week aggregation, goals + priority/star toggles, habits + toggle, checklist items, expenses, dashboard) — see `PlannerMobile/README.md` for the full endpoint table. Still not a general API: each route returns exactly the shape its one mobile screen needs, not a resource-oriented REST surface. CORS is wide open (`Access-Control-Allow-Origin: *`) on all of them, which is safe specifically because auth here is a Bearer token the client must already possess rather than an ambient cookie — there's no session to ride cross-origin the way there would be with cookie-based auth.
+
+**The one place mobile and web share logic, not just a table:** `src/lib/core/weeklyPriority.ts` holds the non-negotiable "max 4 weekly priority goals" transaction. Both `lib/actions/goals.ts`'s `toggleWeeklyPriority` (web) and `app/api/mobile/goals/[id]/priority/route.ts` (mobile) call the same function rather than each re-implementing the limit check — duplicating a safety-critical transaction across two call sites is how it drifts out of sync, which matters more here than the extra indirection costs. Everything else mobile-facing (simple create/delete/toggle CRUD for tasks, habits, checklist items, expenses) is written directly in each route handler, mirroring the corresponding Server Action's logic inline rather than extracting a shared helper — those aren't safety-critical, so the duplication is an accepted, deliberate tradeoff against the complexity of threading a shared core through both a cookie-based and a token-based auth path for every domain.
 
 ## Auth
 
@@ -98,7 +100,10 @@ src/
   lib/
     actions/                  — "use server" mutations, one file per domain, all auth-checked + revalidating
                                  (tasks, goals, timeblocks, days, settings, auth, habits, checklists, weeklyReview, expenses)
-    auth/                     — password.ts, session.ts, dal.ts
+    auth/                     — password.ts, session.ts, dal.ts, mobileAuth.ts (Bearer-token auth for /api/mobile/*)
+    core/                      — business logic shared between a web Server Action and a mobile route handler,
+                                 used only where duplication would be a correctness risk (see "Mobile API surface")
+    validation/                — zod schemas that can't live in a "use server" file (which may only export async functions)
     date/week.ts              — all week/day-boundary math; the one place that knows about weekStartsOn
     planner/                  — getOrCreateWeek/Day/WeeklyChecklist (lazy creation, via upsertOrFetch), timeblocks.ts (pure time-math)
     pdf/                       — @react-pdf/renderer document templates, server-only, imported only by export route.ts handlers

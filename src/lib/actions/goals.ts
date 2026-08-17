@@ -3,9 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { verifySession } from "@/lib/auth/dal";
+import { toggleWeeklyPriorityCore } from "@/lib/core/weeklyPriority";
 import { GoalLevel, GoalCategory, GoalStatus, ProgressMode } from "@/generated/prisma/enums";
-
-const MAX_WEEKLY_PRIORITIES = 4;
 
 function refresh() {
   revalidatePath("/", "layout");
@@ -83,32 +82,11 @@ export async function deleteGoal(goalId: string) {
   refresh();
 }
 
-// Enforces the non-negotiable "max 4 weekly priority goals" rule (§40 / §7).
+// Enforces the non-negotiable "max 4 weekly priority goals" rule (§40 / §7) — the
+// actual transaction lives in lib/core/weeklyPriority.ts, shared with the mobile route.
 export async function toggleWeeklyPriority(goalId: string) {
   const { userId } = await verifySession();
-  const goal = await ownedGoalOrThrow(goalId, userId);
-  if (!goal.weekId) return { error: "This goal isn't attached to a week." };
-
-  return db.$transaction(async (tx) => {
-    if (goal.weeklyPriorityRank !== null) {
-      await tx.goal.update({ where: { id: goalId }, data: { weeklyPriorityRank: null } });
-      refresh();
-      return {};
-    }
-
-    const existing = await tx.goal.findMany({
-      where: { userId, weekId: goal.weekId, weeklyPriorityRank: { not: null } },
-      select: { weeklyPriorityRank: true },
-    });
-    if (existing.length >= MAX_WEEKLY_PRIORITIES) {
-      return { error: `This week's top ${MAX_WEEKLY_PRIORITIES} priorities are full. Remove one first.` };
-    }
-    const usedRanks = new Set(existing.map((g) => g.weeklyPriorityRank));
-    let rank = 1;
-    while (usedRanks.has(rank)) rank++;
-
-    await tx.goal.update({ where: { id: goalId }, data: { weeklyPriorityRank: rank } });
-    refresh();
-    return {};
-  });
+  const result = await toggleWeeklyPriorityCore(userId, goalId);
+  if (!result.error) refresh();
+  return result;
 }
