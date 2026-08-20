@@ -9,6 +9,7 @@ import {
   daysElapsedInMonth,
   shiftMonthKey,
   dateToKey,
+  formatCountdown,
 } from "@/lib/date/week";
 
 describe("addDays", () => {
@@ -107,5 +108,31 @@ describe("shiftMonthKey", () => {
 describe("dateToKey", () => {
   it("pads single-digit months and days", () => {
     expect(dateToKey(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+});
+
+describe("formatCountdown", () => {
+  it("today is called out specially, not \"in 0 days\"", () => {
+    expect(formatCountdown("2026-08-20", "2026-08-20")).toBe("Due today");
+  });
+
+  it("tomorrow is called out specially, not \"in 1 days\"", () => {
+    expect(formatCountdown("2026-08-21", "2026-08-20")).toBe("Due tomorrow");
+  });
+
+  it("a future date further out uses plural \"days\"", () => {
+    expect(formatCountdown("2026-08-25", "2026-08-20")).toBe("in 5 days");
+  });
+
+  it("yesterday is singular \"1 day overdue\", not \"-1 days overdue\"", () => {
+    expect(formatCountdown("2026-08-19", "2026-08-20")).toBe("1 day overdue");
+  });
+
+  it("further in the past uses plural \"days overdue\"", () => {
+    expect(formatCountdown("2026-08-15", "2026-08-20")).toBe("5 days overdue");
+  });
+
+  it("crosses a month boundary correctly", () => {
+    expect(formatCountdown("2026-09-02", "2026-08-30")).toBe("in 3 days");
   });
 });

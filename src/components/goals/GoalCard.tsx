@@ -6,6 +6,7 @@ import { ProgressRing } from "@/components/ui/ProgressRing";
 import { Select } from "@/components/ui/Field";
 import { updateGoal, deleteGoal } from "@/lib/actions/goals";
 import { GoalStatus } from "@/generated/prisma/enums";
+import { formatDateShort, formatCountdown, todayKey } from "@/lib/date/week";
 
 export type GoalCardData = {
   id: string;
@@ -30,6 +31,11 @@ const STATUS_LABELS: Record<GoalStatus, string> = {
 export function GoalCard({ goal, onRemoved }: { goal: GoalCardData; onRemoved: (id: string) => void }) {
   const [status, setStatus] = useState(goal.status);
   const [isPriority, setIsPriority] = useState(goal.isPriority);
+  // Only an open goal can be "overdue" — once it's ACHIEVED/MISSED/ARCHIVED, a past
+  // target date is just history, not a countdown that still needs attention.
+  const isOpen = status === "NOT_STARTED" || status === "IN_PROGRESS";
+  const countdown = goal.targetDate && isOpen ? formatCountdown(goal.targetDate, todayKey()) : null;
+  const overdue = countdown?.includes("overdue") ?? false;
 
   return (
     <div className={clsx("rounded-xl border bg-surface p-4 flex gap-3", isPriority ? "border-priority" : "border-hairline")}>
@@ -61,7 +67,12 @@ export function GoalCard({ goal, onRemoved }: { goal: GoalCardData; onRemoved: (
           <span className="text-[10px] font-medium uppercase tracking-wide bg-surface-sunken text-ink-soft rounded-full px-1.5 py-0.5">
             {goal.category}
           </span>
-          {goal.targetDate && <span className="text-[11px] text-ink-faint">by {goal.targetDate}</span>}
+          {goal.targetDate && (
+            <span className={clsx("text-[11px]", overdue ? "text-danger" : "text-ink-faint")}>
+              {formatDateShort(goal.targetDate)}
+              {countdown && ` · ${countdown}`}
+            </span>
+          )}
           <Select
             value={status}
             onChange={(e) => {

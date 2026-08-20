@@ -134,3 +134,18 @@ export function formatWeekRange(startKey: string, endKey: string): string {
   const endStr = end.toLocaleDateString(undefined, { day: "numeric", month: "short" });
   return `${startStr} – ${endStr}`;
 }
+
+// Countdown label for a goal's target date. `today` is a parameter rather than an
+// internal todayKey() call so this stays pure and testable (same pattern as
+// habits.ts's computeCurrentStreak). Math.round rather than floor/trunc: both dates
+// are local midnight, so the difference is normally an exact multiple of a day, but
+// a DST transition between them can make it 23 or 25 hours — round absorbs that back
+// to a whole day instead of silently producing an off-by-one.
+export function formatCountdown(targetDate: string, today: string): string {
+  const days = Math.round((keyToDate(targetDate).getTime() - keyToDate(today).getTime()) / 86_400_000);
+  if (days === 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  if (days === -1) return "1 day overdue";
+  if (days > 1) return `in ${days} days`;
+  return `${-days} days overdue`;
+}
