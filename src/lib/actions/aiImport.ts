@@ -38,9 +38,14 @@ export async function parsePlanWithAI(rawText: string): Promise<ParsePlanResult>
 
   let parsedOutput: ParsedPlan | null;
   try {
-    const response = await client.messages.parse({
+    // A large plan (many weeks, hundreds of tasks) can legitimately take well over a
+    // minute to generate -- confirmed directly (a 29-day plan took 83s; a 90-day one
+    // exceeded 2 minutes). Non-streaming `messages.parse()` risks the SDK's own HTTP
+    // request timing out on a response that slow; streaming removes that ceiling, so
+    // max_tokens can also go higher without truncating a large plan's output mid-day.
+    const stream = client.messages.stream({
       model: "claude-opus-5",
-      max_tokens: 16000,
+      max_tokens: 64000,
       system:
         `You turn a user's freeform study/work/personal plan into structured daily planner data. Today's date is ${todayKey()}. ` +
         "Resolve every date the plan describes -- whether absolute (\"August 22\") or relative (\"Day 3\", \"next Monday\") -- into an explicit ISO YYYY-MM-DD date. Never leave a date ambiguous, and never omit a day the plan clearly covers. " +
@@ -50,12 +55,15 @@ export async function parsePlanWithAI(rawText: string): Promise<ParsePlanResult>
       messages: [{ role: "user", content: text }],
       output_config: { format: zodOutputFormat(ParsedPlanSchema) },
     });
+    const response = await stream.finalMessage();
     parsedOutput = response.parsed_output;
   } catch (e) {
+    console.error("[aiImport] parsePlanWithAI failed:", e);
     if (e instanceof Anthropic.AuthenticationError) return { error: "The server's Anthropic API key is invalid." };
     if (e instanceof Anthropic.RateLimitError) return { error: "Rate limited by the AI provider — try again shortly." };
     if (e instanceof Anthropic.APIError) return { error: `AI request failed: ${e.message}` };
-    return { error: "Something went wrong parsing the plan." };
+    const message = e instanceof Error ? e.message : String(e);
+    return { error: `Something went wrong parsing the plan: ${message}` };
   }
 
   if (!parsedOutput) {
