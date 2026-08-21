@@ -45,7 +45,8 @@ export async function parsePlanWithAI(rawText: string): Promise<ParsePlanResult>
         `You turn a user's freeform study/work/personal plan into structured daily planner data. Today's date is ${todayKey()}. ` +
         "Resolve every date the plan describes -- whether absolute (\"August 22\") or relative (\"Day 3\", \"next Monday\") -- into an explicit ISO YYYY-MM-DD date. Never leave a date ambiguous, and never omit a day the plan clearly covers. " +
         "Preserve the plan's own specific content: do not invent activities it didn't mention, do not merge multiple distinct days into one entry, and do not replace specific tasks with generic placeholders. " +
-        "Mark at most 3 tasks per day as isPriority: true -- when the source lists more than 3 things for a day, pick only that day's single most important 1-3 items; the rest still get created as regular (non-priority) tasks, never dropped.",
+        "Mark at most 3 tasks per day as isPriority: true -- when the source lists more than 3 things for a day, pick only that day's single most important 1-3 items; the rest still get created as regular (non-priority) tasks, never dropped. " +
+        "Only include a habit if the plan text itself explicitly describes an ongoing recurring practice (e.g. it names a daily/weekly ritual, or has its own 'habits' section) -- never infer a habit just because a plan involves a repeated activity across several days (a multi-day task list is not, by itself, evidence the user wants habit tracking). Leave habits empty/omitted whenever the plan doesn't ask for one.",
       messages: [{ role: "user", content: text }],
       output_config: { format: zodOutputFormat(ParsedPlanSchema) },
     });

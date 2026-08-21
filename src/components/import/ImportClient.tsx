@@ -16,6 +16,7 @@ export function ImportClient() {
   const [rawText, setRawText] = useState("");
   const [plan, setPlan] = useState<ParsedPlan | null>(null);
   const [conflictDates, setConflictDates] = useState<string[]>([]);
+  const [excludedHabits, setExcludedHabits] = useState<Set<string>>(new Set());
   const [parsing, setParsing] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +44,8 @@ export function ImportClient() {
     setError(null);
     setCommitting(true);
     try {
-      const res = await commitParsedPlan(plan);
+      const habits = plan.habits?.filter((h) => !excludedHabits.has(h.name));
+      const res = await commitParsedPlan({ ...plan, habits });
       if (res.error) {
         setError(res.error);
         return;
@@ -55,10 +57,20 @@ export function ImportClient() {
     }
   }
 
+  function toggleHabit(name: string) {
+    setExcludedHabits((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   function handleStartOver() {
     setStep("input");
     setPlan(null);
     setConflictDates([]);
+    setExcludedHabits(new Set());
     setError(null);
     setResult(null);
   }
@@ -124,6 +136,29 @@ export function ImportClient() {
             </div>
           ))}
         </div>
+
+        {plan.habits && plan.habits.length > 0 && (
+          <div className="rounded-xl border border-hairline bg-surface p-5">
+            <p className="text-xs font-semibold text-ink mb-2">
+              Habits it wants to create <span className="text-ink-faint font-normal">— untick any you don&apos;t want</span>
+            </p>
+            <ul className="flex flex-col gap-1.5">
+              {plan.habits.map((h) => (
+                <li key={h.name} className="text-xs text-ink flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={!excludedHabits.has(h.name)}
+                    onChange={() => toggleHabit(h.name)}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span className={clsx(excludedHabits.has(h.name) && "line-through text-ink-faint")}>
+                    {h.name} — {h.frequency === "X_TIMES_PER_WEEK" ? `${h.target}×/week` : h.frequency.toLowerCase()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
