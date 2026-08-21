@@ -60,6 +60,16 @@ Database-backed sessions, not JWTs: `Session.tokenHash` (SHA-256 of a random 32-
 
 Password reset is schema-ready (nothing currently) but not implemented — it needs an email-sending dependency this environment can't exercise. Documented as a gap, not silently half-built.
 
+## AI import
+
+`/import` turns a pasted freeform plan (a study schedule, project timeline, anything with dates and daily activities) into real Days/Tasks/Goals — no new storage system, it writes through the same tables every other page uses. `src/lib/actions/aiImport.ts` has two Server Actions, deliberately not one: `parsePlanWithAI` calls the Anthropic API (`claude-opus-5`, via `client.messages.parse` with `zodOutputFormat` against the schema in `src/lib/ai/plan.ts`) and returns a preview — nothing is written to the database yet — and `commitParsedPlan` writes that (possibly user-reviewed) result once the user confirms in the UI. Splitting these into two actions is the actual safety mechanism: an LLM parsing an arbitrary plan can misdate things or miss a scheduling conflict, so nothing lands in the database without a human looking at what's about to be created first.
+
+Requires `ANTHROPIC_API_KEY` in `.env` (unset in this repo — add your own key to use it; `parsePlanWithAI` fails gracefully with a message telling you to, rather than crashing, when it's missing).
+
+The parsed output intentionally produces a flatter goal structure than a hand-written seed script could — one overarching goal per import, not a hierarchy of week-level sub-goals — because an LLM parsing content it didn't design is far more likely to get a flat structure right than to correctly infer week groupings; a user can always split it into sub-goals afterward through the existing Goals UI.
+
+**The daily-priority cap gets a second call site here, so it's now genuinely shared, not just duplicated:** `src/lib/core/dailyPriority.ts` holds `toggleDailyPriorityCore` (extracted from `lib/actions/tasks.ts`'s `toggleDailyPriority`, same rationale as `weeklyPriority.ts` below) plus `nextOpenDailyPriorityRanks`, a bulk variant `commitParsedPlan` uses to assign as many of a day's AI-flagged "priority" tasks as still fit in that day's 3 slots — respecting whatever's already there — rather than overflowing past 3 or silently overwriting an existing task's rank.
+
 ## Local development environment
 
 **The project must live on an NTFS volume.** Next.js 16's Turbopack (both `next dev` and `next build`) creates filesystem junctions/symlinks under `.next/` for its dependency trace, and this fails hard (`ERROR_INVALID_FUNCTION`, os error 1) on exFAT/FAT32. This repo was moved from `D:\programming\Planner` (exFAT) to `C:\programming\Planner` (NTFS) for exactly this reason, mid-session. `C:\programming\Planner` is the live copy going forward; `D:\programming\Planner` is now a superseded snapshot from just before that move — nothing has been committed anywhere, so removing it (or not) is entirely your call.

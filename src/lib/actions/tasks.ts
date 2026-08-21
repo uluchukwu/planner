@@ -4,8 +4,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { verifySession } from "@/lib/auth/dal";
 import { TaskPriority } from "@/generated/prisma/enums";
-
-const MAX_DAILY_PRIORITIES = 3;
+import { toggleDailyPriorityCore } from "@/lib/core/dailyPriority";
 
 function refresh() {
   revalidatePath("/", "layout");
@@ -134,33 +133,11 @@ export async function reorderColumn(weekId: string, dayId: string | null, ordere
   refresh();
 }
 
-// Enforces the non-negotiable "max 3 daily priorities" rule (§40) inside a
-// transaction so a race between two tabs can't create a 4th.
+// Enforces the non-negotiable "max 3 daily priorities" rule (§40) — the transaction
+// itself now lives in lib/core/dailyPriority.ts, shared with the AI-import commit flow.
 export async function toggleDailyPriority(taskId: string) {
   const { userId } = await verifySession();
-  const task = await ownedTaskOrThrow(taskId, userId);
-  if (!task.dayId) return { error: "Assign this task to a day first." };
-
-  return db.$transaction(async (tx) => {
-    if (task.dailyPriorityRank !== null) {
-      await tx.task.update({ where: { id: taskId }, data: { dailyPriorityRank: null } });
-      refresh();
-      return {};
-    }
-
-    const existing = await tx.task.findMany({
-      where: { userId, dayId: task.dayId, dailyPriorityRank: { not: null } },
-      select: { dailyPriorityRank: true },
-    });
-    if (existing.length >= MAX_DAILY_PRIORITIES) {
-      return { error: `Today's top ${MAX_DAILY_PRIORITIES} is full. Remove one first.` };
-    }
-    const usedRanks = new Set(existing.map((t) => t.dailyPriorityRank));
-    let rank = 1;
-    while (usedRanks.has(rank)) rank++;
-
-    await tx.task.update({ where: { id: taskId }, data: { dailyPriorityRank: rank } });
-    refresh();
-    return {};
-  });
+  const result = await toggleDailyPriorityCore(userId, taskId);
+  if (!result.error) refresh();
+  return result;
 }

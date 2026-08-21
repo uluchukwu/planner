@@ -1,6 +1,6 @@
 # Planner
 
-A personal productivity & weekly planning app, inspired by a paper planner: goal setting (year → month → week), weekly/daily planning with drag-and-drop, time-blocking, habit tracking, checklists, expense tracking, a weekly review flow, and PDF export.
+A personal productivity & weekly planning app, inspired by a paper planner: goal setting (year → month → week), weekly/daily planning with drag-and-drop, time-blocking, habit tracking, checklists, expense tracking, a weekly review flow, PDF export, and AI import (paste a freeform plan, review what it parses into, then commit it as real days/tasks/goals — see `docs/ARCHITECTURE.md` → "AI import"; requires your own `ANTHROPIC_API_KEY`).
 
 Built with Next.js 16 (App Router), Prisma 7, PostgreSQL, and TypeScript.
 

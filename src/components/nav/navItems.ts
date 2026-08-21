@@ -1,4 +1,4 @@
-export type NavItem = { href: string; label: string; icon: "home" | "today" | "week" | "goals" | "habits" | "expenses" | "settings" };
+export type NavItem = { href: string; label: string; icon: "home" | "today" | "week" | "goals" | "habits" | "expenses" | "import" | "settings" };
 
 // Desktop sidebar shows everything. Mobile bottom nav deliberately stays to 5 items
 // (§21 of the brief: "Do not expose every feature in the bottom navigation") — Habits
@@ -11,6 +11,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/goals", label: "Goals", icon: "goals" },
   { href: "/habits", label: "Habits", icon: "habits" },
   { href: "/expenses", label: "Expenses", icon: "expenses" },
+  { href: "/import", label: "AI import", icon: "import" },
   { href: "/settings", label: "Settings", icon: "settings" },
 ];
 
