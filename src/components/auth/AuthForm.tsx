@@ -37,7 +37,12 @@ export function AuthForm({
           <Input id="email" name="email" type="email" autoComplete="email" required />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="password">Password</Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            {mode === "login" && (
+              <Link href="/forgot-password" className="text-xs text-ink-faint hover:text-accent-strong">Forgot password?</Link>
+            )}
+          </div>
           <Input id="password" name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} required minLength={8} />
         </div>
 

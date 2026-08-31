@@ -136,6 +136,7 @@ model User {
   notificationsEnabled Boolean         @default(true)
 
   sessions      Session[]
+  passwordResetTokens PasswordResetToken[]
   goals         Goal[]
   weeks         Week[]
   days          Day[]
@@ -162,6 +163,22 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// Deliberately separate from Session: a reset token is single-use and short-lived
+// (30 min, see lib/auth/passwordReset.ts), where a session is long-lived and reusable.
+// Same hashed-token-at-rest pattern as Session -- the raw token only ever exists in
+// the emailed link, never in the database.
+model PasswordResetToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // ── Time containers ─────────────────────────────────────────────────────
