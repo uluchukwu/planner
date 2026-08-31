@@ -6,7 +6,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { db } from "@/lib/db";
 import { verifySession } from "@/lib/auth/dal";
 import { getOrCreateDay } from "@/lib/planner/days";
-import { todayKey } from "@/lib/date/week";
+import { todayKey, addDays } from "@/lib/date/week";
 import { applyPlannedDays } from "@/lib/ai/applyPlan";
 import { AdjustmentPlanSchema, type AdjustmentPlan, type ResolvedUpdate, type ResolvedDelete } from "@/lib/ai/adjust";
 
@@ -107,10 +107,11 @@ export async function parseAdjustment(goalId: string, instruction: string): Prom
         `You adjust an existing structured plan based on a user's plain-language instruction. Today's date is ${todayKey()}. ` +
         `The plan "${goal.title}" currently has these tasks, one JSON object per line:\n${contextLines.join("\n")}\n\n` +
         "Propose the minimal set of changes that satisfies the instruction. " +
-        "For any existing task that should change (move to a different date, get new/edited text, change priority, etc.), put it in `updates` using its EXACT existing taskId from the list above -- never invent an id, never put an id that isn't in that list. Only set the fields on an update that actually change; leave the rest omitted. " +
+        "If the instruction is a blanket shift of the whole plan's dates (e.g. 'push it back a week', 'move everything 3 days earlier'), set `shiftAllByDays` to the number of days (positive = later, negative = earlier) INSTEAD OF listing every task individually in `updates` -- do not enumerate hundreds of per-task date changes for a uniform shift, it's slow and unnecessary. " +
+        "For any existing task that needs something OTHER than (or in addition to) that uniform shift -- different content, a change of priority, a one-off date that doesn't follow the blanket shift -- put it in `updates` using its EXACT existing taskId from the list above -- never invent an id, never put an id that isn't in that list. Only set the fields on an update that actually change; leave the rest omitted. " +
         "For any existing task that should be removed entirely, put its exact taskId in `deletes`. " +
         "For genuinely new days/tasks the instruction asks for that aren't in the list above, put them in `creates`, using the same shape as a fresh plan import. " +
-        "Do not touch tasks that the instruction doesn't concern -- an instruction like 'push the plan back a week' means every task's date shifts by 7 days, not that content changes. " +
+        "Do not touch tasks that the instruction doesn't concern. " +
         "Mark at most 3 tasks per day as isPriority: true, matching the app's Top 3 daily priority slots. " +
         "Write a one-sentence `summary` of what this adjustment does overall.",
       messages: [{ role: "user", content: text }],
@@ -136,7 +137,20 @@ export async function parseAdjustment(goalId: string, instruction: string): Prom
   const validTaskIds = new Set(tasks.map((t) => t.id));
   const byId = new Map(tasks.map((t) => [t.id, t]));
 
-  const updates: ResolvedUpdate[] = parsedOutput.updates
+  // Expand a blanket shift into a per-task date change server-side, for every task the
+  // model didn't already give its own update/delete -- this is what keeps a whole-plan
+  // shift on a large plan from ever needing to be enumerated by the model at all.
+  const rawUpdates = [...parsedOutput.updates];
+  if (parsedOutput.shiftAllByDays) {
+    const shift = parsedOutput.shiftAllByDays;
+    const alreadyHandled = new Set([...parsedOutput.updates.map((u) => u.taskId), ...parsedOutput.deletes]);
+    for (const t of tasks) {
+      if (alreadyHandled.has(t.id) || !t.day?.date) continue;
+      rawUpdates.push({ taskId: t.id, newDate: addDays(t.day.date, shift) });
+    }
+  }
+
+  const updates: ResolvedUpdate[] = rawUpdates
     .filter((u) => validTaskIds.has(u.taskId))
     .map((u) => {
       const before = byId.get(u.taskId)!;
@@ -175,63 +189,82 @@ export async function commitAdjustment(
   const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
 
   const goalIds = await collectGoalIds(userId, goalId);
-  const ownedTasks = await db.task.findMany({ where: { userId, goalId: { in: goalIds } }, select: { id: true } });
-  const ownedIds = new Set(ownedTasks.map((t) => t.id));
+  const ownedTasks = await db.task.findMany({ where: { userId, goalId: { in: goalIds } } });
+  const ownedById = new Map(ownedTasks.map((t) => [t.id, t]));
 
-  let deleted = 0;
-  for (const taskId of deletes) {
-    if (!ownedIds.has(taskId)) continue;
-    await db.task.delete({ where: { id: taskId } });
-    deleted++;
+  const deleteSet = new Set(deletes.filter((id) => ownedById.has(id)));
+  const validUpdates = updates.filter((u) => ownedById.has(u.taskId) && !deleteSet.has(u.taskId));
+
+  // Resolve every distinct target date once, up front -- a blanket shift on a large plan
+  // (e.g. 252 tasks) touches far fewer distinct dates than tasks, and get-or-create isn't
+  // something the write transaction below should repeat once per task.
+  const distinctDates = [...new Set(validUpdates.map((u) => u.newDate).filter((d): d is string => !!d))];
+  const dayByDate = new Map<string, { id: string; weekId: string | null }>();
+  for (const date of distinctDates) {
+    const day = await getOrCreateDay(userId, date, user.weekStartsOn);
+    dayByDate.set(date, { id: day.id, weekId: day.weekId });
   }
 
-  let updated = 0;
-  for (const u of updates) {
-    if (!ownedIds.has(u.taskId)) continue;
-    const task = await db.task.findUnique({ where: { id: u.taskId } });
-    if (!task) continue;
-
-    let dayId = task.dayId;
-    let weekId = task.weekId;
-    let dailyPriorityRank = task.dailyPriorityRank;
-    if (u.newDate) {
-      const targetDay = await getOrCreateDay(userId, u.newDate, user.weekStartsOn);
-      if (targetDay.id !== task.dayId) {
-        dayId = targetDay.id;
-        weekId = targetDay.weekId;
-        // A rank from the old day isn't meaningful on the new one -- same reset
-        // rescheduleTaskToDate applies for manual drag-and-drop moves.
-        dailyPriorityRank = null;
+  // A large adjustment (hundreds of tasks) can take longer than Prisma's default 5s
+  // interactive-transaction timeout -- give it real headroom rather than failing partway
+  // through a batch that should be all-or-nothing.
+  const { deleted, updated } = await db.$transaction(
+    async (tx) => {
+      let deletedCount = 0;
+      if (deleteSet.size > 0) {
+        const res = await tx.task.deleteMany({ where: { id: { in: [...deleteSet] } } });
+        deletedCount = res.count;
       }
-    }
 
-    if (u.isPriority === false) {
-      dailyPriorityRank = null;
-    } else if (u.isPriority === true && dailyPriorityRank === null && dayId) {
-      const existing = await db.task.findMany({
-        where: { userId, dayId, dailyPriorityRank: { not: null }, id: { not: task.id } },
-        select: { dailyPriorityRank: true },
-      });
-      const used = new Set(existing.map((t) => t.dailyPriorityRank));
-      let rank = 1;
-      while (used.has(rank) && rank <= 3) rank++;
-      dailyPriorityRank = rank <= 3 ? rank : null;
-    }
+      let updatedCount = 0;
+      for (const u of validUpdates) {
+        const task = ownedById.get(u.taskId)!;
 
-    await db.task.update({
-      where: { id: u.taskId },
-      data: {
-        title: u.title ?? task.title,
-        notes: u.notes ?? task.notes,
-        category: u.category ?? task.category,
-        estimatedMinutes: u.estimatedMinutes ?? task.estimatedMinutes,
-        dayId,
-        weekId,
-        dailyPriorityRank,
-      },
-    });
-    updated++;
-  }
+        let dayId = task.dayId;
+        let weekId = task.weekId;
+        let dailyPriorityRank = task.dailyPriorityRank;
+        if (u.newDate) {
+          const target = dayByDate.get(u.newDate)!;
+          if (target.id !== task.dayId) {
+            dayId = target.id;
+            weekId = target.weekId;
+            // A rank from the old day isn't meaningful on the new one -- same reset
+            // rescheduleTaskToDate applies for manual drag-and-drop moves.
+            dailyPriorityRank = null;
+          }
+        }
+
+        if (u.isPriority === false) {
+          dailyPriorityRank = null;
+        } else if (u.isPriority === true && dailyPriorityRank === null && dayId) {
+          const existing = await tx.task.findMany({
+            where: { userId, dayId, dailyPriorityRank: { not: null }, id: { not: task.id } },
+            select: { dailyPriorityRank: true },
+          });
+          const used = new Set(existing.map((t) => t.dailyPriorityRank));
+          let rank = 1;
+          while (used.has(rank) && rank <= 3) rank++;
+          dailyPriorityRank = rank <= 3 ? rank : null;
+        }
+
+        await tx.task.update({
+          where: { id: u.taskId },
+          data: {
+            title: u.title ?? task.title,
+            notes: u.notes ?? task.notes,
+            category: u.category ?? task.category,
+            estimatedMinutes: u.estimatedMinutes ?? task.estimatedMinutes,
+            dayId,
+            weekId,
+            dailyPriorityRank,
+          },
+        });
+        updatedCount++;
+      }
+      return { deleted: deletedCount, updated: updatedCount };
+    },
+    { timeout: 60_000, maxWait: 10_000 }
+  );
 
   const { tasksCreated } = await applyPlannedDays(userId, user.weekStartsOn, goal.id, creates);
 

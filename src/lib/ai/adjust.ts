@@ -22,8 +22,21 @@ export const TaskUpdateSchema = z.object({
 
 export const AdjustmentPlanSchema = z.object({
   summary: z.string().min(1).max(300).describe("One sentence describing what this adjustment does overall."),
-  updates: z.array(TaskUpdateSchema).max(200),
-  deletes: z.array(z.string().uuid()).max(200).describe("ids of existing tasks to remove entirely."),
+  // A blanket date shift (e.g. "push the whole plan back a week") would otherwise force
+  // the model to enumerate every single task as its own update -- slow, and liable to
+  // overflow the updates cap on a large plan (confirmed directly: a 252-task plan
+  // pushed back a week produced 252 updates and failed validation at >200). This field
+  // lets the model express that instruction in one number instead; the server resolves
+  // it into per-task date changes for tasks not otherwise mentioned in updates/deletes.
+  shiftAllByDays: z
+    .number()
+    .int()
+    .optional()
+    .describe(
+      "Set this INSTEAD OF listing every task in `updates` when the instruction is a blanket shift of the whole plan's dates (e.g. 'push it back a week' = 7, 'move everything 3 days earlier' = -3). Only tasks not otherwise given their own entry in `updates` or `deletes` are shifted by this amount; leave unset for anything else."
+    ),
+  updates: z.array(TaskUpdateSchema).max(300),
+  deletes: z.array(z.string().uuid()).max(300).describe("ids of existing tasks to remove entirely."),
   creates: z.array(PlannedDaySchema).max(60).describe("Brand-new days/tasks the instruction asks for that don't exist yet."),
 });
 
