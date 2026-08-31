@@ -8,24 +8,30 @@ import { verifySession } from "@/lib/auth/dal";
 import { getOrCreateDay } from "@/lib/planner/days";
 import { todayKey, addDays } from "@/lib/date/week";
 import { applyPlannedDays } from "@/lib/ai/applyPlan";
-import { AdjustmentPlanSchema, type AdjustmentPlan, type ResolvedUpdate, type ResolvedDelete } from "@/lib/ai/adjust";
+import { AdjustmentPlanSchema, MAX_INSTRUCTION_CHARS, type AdjustmentPlan, type ResolvedUpdate, type ResolvedDelete } from "@/lib/ai/adjust";
 
-const MAX_INSTRUCTION_CHARS = 2000;
+export type AdjustableGoal = { id: string; title: string; level: "YEAR" | "MONTH" | "WEEK"; taskCount: number };
 
-export type AdjustableGoal = { id: string; title: string; taskCount: number };
-
+// Every goal level is selectable, not just YEAR -- a big hand-built hierarchy (year ->
+// month -> week) has far more tasks under its year goal than under any one of its week
+// goals, and a plain-language instruction that needs to reconsider most of a plan's
+// content (not just shift dates) is slow in direct proportion to how many tasks it has
+// to look at. Letting the user target "just this week" instead of "the whole plan" is a
+// real, tested way to keep an otherwise-slow instruction fast: confirmed directly that a
+// content-rewriting instruction over ~100 tasks took nearly 3 minutes, which risks the
+// same platform-level proxy-timeout limitation already documented for large AI imports.
 export async function fetchAdjustableGoals(): Promise<AdjustableGoal[]> {
   const { userId } = await verifySession();
   const goals = await db.goal.findMany({
-    where: { userId, level: "YEAR" },
-    select: { id: true, title: true, _count: { select: { tasks: true, children: true } } },
-    orderBy: { createdAt: "desc" },
+    where: { userId },
+    select: { id: true, title: true, level: true },
+    orderBy: [{ level: "asc" }, { createdAt: "desc" }],
   });
   const withDescendantCounts = await Promise.all(
     goals.map(async (g) => {
       const ids = await collectGoalIds(userId, g.id);
       const taskCount = await db.task.count({ where: { userId, goalId: { in: ids } } });
-      return { id: g.id, title: g.title, taskCount };
+      return { id: g.id, title: g.title, level: g.level, taskCount };
     })
   );
   return withDescendantCounts.filter((g) => g.taskCount > 0);

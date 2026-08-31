@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { PlannedDaySchema } from "@/lib/ai/plan";
 
+// Shared between the server action (enforces it) and the adjust UI (shows a live
+// counter against it) so the two can't drift out of sync.
+export const MAX_INSTRUCTION_CHARS = 8000;
+
 // Structured shape for the AI edit-by-instruction flow: given an existing goal's tasks
 // plus a plain-language instruction, the AI proposes changes to make instead of writing
 // them directly. Every update/delete references an existing task by its real id (echoed
@@ -21,7 +25,7 @@ export const TaskUpdateSchema = z.object({
 });
 
 export const AdjustmentPlanSchema = z.object({
-  summary: z.string().min(1).max(300).describe("One sentence describing what this adjustment does overall."),
+  summary: z.string().min(1).max(600).describe("A short summary (1-2 sentences) describing what this adjustment does overall."),
   // A blanket date shift (e.g. "push the whole plan back a week") would otherwise force
   // the model to enumerate every single task as its own update -- slow, and liable to
   // overflow the updates cap on a large plan (confirmed directly: a 252-task plan

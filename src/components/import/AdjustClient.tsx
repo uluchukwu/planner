@@ -5,7 +5,7 @@ import { clsx } from "clsx";
 import { Button } from "@/components/ui/Button";
 import { Textarea, Label, Select } from "@/components/ui/Field";
 import { fetchAdjustableGoals, parseAdjustment, commitAdjustment, type AdjustableGoal } from "@/lib/actions/aiAdjust";
-import type { ResolvedUpdate, ResolvedDelete, AdjustmentPlan } from "@/lib/ai/adjust";
+import { MAX_INSTRUCTION_CHARS, type ResolvedUpdate, type ResolvedDelete, type AdjustmentPlan } from "@/lib/ai/adjust";
 import { formatDateShort } from "@/lib/date/week";
 
 type Step = "input" | "preview" | "done";
@@ -225,24 +225,34 @@ export function AdjustClient() {
         {goals === null && <option>Loading…</option>}
         {goals?.map((g) => (
           <option key={g.id} value={g.id}>
-            {g.title} ({g.taskCount} task{g.taskCount === 1 ? "" : "s"})
+            [{g.level === "YEAR" ? "Whole plan" : g.level === "MONTH" ? "Month" : "Week"}] {g.title} ({g.taskCount} task{g.taskCount === 1 ? "" : "s"})
           </option>
         ))}
       </Select>
+      <p className="text-xs text-ink-faint -mt-2">
+        Picking a smaller scope (a month or week instead of the whole plan) is faster and more reliable for instructions that rework a lot of content, not just dates.
+      </p>
 
       <Label htmlFor="adjust-instruction">What should change?</Label>
       <Textarea
         id="adjust-instruction"
-        rows={4}
+        rows={8}
         value={instruction}
         onChange={(e) => setInstruction(e.target.value)}
         placeholder="e.g. Push the whole plan back by one week. Or: Move Tuesday's writing task to Thursday instead."
         className={clsx(parsing && "opacity-60")}
         disabled={parsing}
       />
+      <p className={clsx("text-xs text-right -mt-2", instruction.length > MAX_INSTRUCTION_CHARS ? "text-danger" : "text-ink-faint")}>
+        {instruction.length} / {MAX_INSTRUCTION_CHARS}
+      </p>
       {error && <p className="text-sm text-danger">{error}</p>}
       <div>
-        <Button variant="primary" onClick={handleParse} disabled={parsing || !instruction.trim() || !goalId}>
+        <Button
+          variant="primary"
+          onClick={handleParse}
+          disabled={parsing || !instruction.trim() || !goalId || instruction.length > MAX_INSTRUCTION_CHARS}
+        >
           {parsing ? "Working it out…" : "Figure out the changes"}
         </Button>
       </div>
