@@ -5,11 +5,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { db } from "@/lib/db";
 import { verifySession } from "@/lib/auth/dal";
-import { getOrCreateWeek } from "@/lib/planner/weeks";
-import { getOrCreateDay } from "@/lib/planner/days";
-import { nextOpenDailyPriorityRanks } from "@/lib/core/dailyPriority";
 import { todayKey } from "@/lib/date/week";
 import { ParsedPlanSchema, type ParsedPlan } from "@/lib/ai/plan";
+import { applyPlannedDays } from "@/lib/ai/applyPlan";
 
 const MAX_INPUT_CHARS = 20000;
 
@@ -97,48 +95,7 @@ export async function commitParsedPlan(planInput: ParsedPlan): Promise<{ error?:
     },
   });
 
-  let daysTouched = 0;
-  let tasksCreated = 0;
-
-  for (const dayPlan of days) {
-    const week = await getOrCreateWeek(userId, dayPlan.date, user.weekStartsOn);
-    const day = await getOrCreateDay(userId, dayPlan.date, user.weekStartsOn);
-    if (dayPlan.challenge || dayPlan.objective) {
-      await db.day.update({
-        where: { id: day.id },
-        data: {
-          challenge: dayPlan.challenge ?? day.challenge,
-          objective: dayPlan.objective ?? day.objective,
-        },
-      });
-    }
-    daysTouched++;
-
-    const priorityWantedCount = dayPlan.tasks.filter((t) => t.isPriority).length;
-    const ranks = await nextOpenDailyPriorityRanks(userId, day.id, priorityWantedCount);
-    let rankCursor = 0;
-
-    const existingSiblingCount = await db.task.count({ where: { userId, weekId: week.id, dayId: day.id } });
-    for (let i = 0; i < dayPlan.tasks.length; i++) {
-      const t = dayPlan.tasks[i];
-      const rank = t.isPriority ? ranks[rankCursor++] : null;
-      await db.task.create({
-        data: {
-          userId,
-          weekId: week.id,
-          dayId: day.id,
-          goalId: goal.id,
-          title: t.title,
-          category: t.category ?? null,
-          estimatedMinutes: t.estimatedMinutes ?? null,
-          notes: t.notes ?? null,
-          dailyPriorityRank: rank,
-          sortOrder: existingSiblingCount + i,
-        },
-      });
-      tasksCreated++;
-    }
-  }
+  const { daysTouched, tasksCreated } = await applyPlannedDays(userId, user.weekStartsOn, goal.id, days);
 
   let habitsCreated = 0;
   for (const h of habits ?? []) {
